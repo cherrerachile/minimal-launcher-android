@@ -17,7 +17,13 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p = Path('MinimalLauncher/app/build.gradle.kts')
-          p.write_text(p.read_text().replace('versionCode = 1; versionName = "1.0"', 'versionCode = 4; versionName = "1.3"'))
+          g = p.read_text()
+          g = g.replace('applicationId = "cl.minimal.launcher"', 'applicationId = "cl.minimal.launcher.modern"')
+          g = g.replace('versionCode = 1; versionName = "1.0"', 'versionCode = 5; versionName = "1.4"')
+          assert 'applicationId = "cl.minimal.launcher.modern"' in g
+          p.write_text(g)
+          m = Path('MinimalLauncher/app/src/main/AndroidManifest.xml')
+          m.write_text(m.read_text().replace('android:label="Minimal Launcher"', 'android:label="Minimal Launcher Modern"'))
           PY
       - uses: actions/setup-java@v4
         with:
@@ -36,6 +42,6 @@ jobs:
         run: gradle --no-daemon assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: MinimalLauncher-v1.3-debug-apk
+          name: MinimalLauncher-v1.4-modern-debug-apk
           path: MinimalLauncher/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
