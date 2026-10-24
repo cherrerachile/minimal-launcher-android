@@ -10,45 +10,15 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Extract and harden Android project
+      - name: Extract Android project and apply v1.2 changes
         run: |
           unzip -q MinimalLauncher_v1_source.zip
+          cp .github/overrides/MainActivity.kt MinimalLauncher/app/src/main/java/cl/minimal/launcher/MainActivity.kt
           python3 - <<'PY'
           from pathlib import Path
-          base = Path('MinimalLauncher/app/src/main')
-          manifest = base / 'AndroidManifest.xml'
-          m = manifest.read_text()
-          m = m.replace('    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n', '')
-          manifest.write_text(m)
-          activity = base / 'java/cl/minimal/launcher/MainActivity.kt'
-          s = activity.read_text()
-          s = s.replace('import android.Manifest\n', '').replace('import android.content.pm.PackageManager\n', '').replace('import android.location.LocationManager\n', '')
-          start = s.index('        if (checkSelfPermission(')
-          end = s.index('        handler.post(', start)
-          s = s[:start] + '        refreshWeather()\n' + s[end:]
-          s = s.replace('Clima: activa la ubicación', 'Clima: Santiago (configuración inicial)')
-          start = s.index('    override fun onRequestPermissionsResult(')
-          s = s[:start] + '''    private fun refreshWeather() {
-              thread {
-                  try {
-                      val url = "https://api.open-meteo.com/v1/forecast?latitude=-33.4489&longitude=-70.6693&current=temperature_2m,weather_code&timezone=auto"
-                      val connection = URL(url).openConnection().apply { connectTimeout = 8000; readTimeout = 8000 }
-                      val json = JSONObject(connection.getInputStream().bufferedReader().use { it.readText() }).getJSONObject("current")
-                      val degrees = json.getDouble("temperature_2m").toInt()
-                      val code = json.getInt("weather_code")
-                      val condition = when(code) { 0 -> "Despejado"; 1,2,3 -> "Nubosidad"; 45,48 -> "Niebla"; in 51..67 -> "Lluvia"; in 71..77 -> "Nieve"; in 80..82 -> "Chubascos"; in 95..99 -> "Tormenta"; else -> "Variable" }
-                      runOnUiThread { if (::weather.isInitialized) weather.text = "Santiago · $degrees°C · $condition" }
-                  } catch (_: Exception) { runOnUiThread { if (::weather.isInitialized) weather.text = "Clima no disponible" } }
-              }
-          }
-          }
-          '''
-          activity.write_text(s)
-          gradle = Path('MinimalLauncher/app/build.gradle.kts')
-          g = gradle.read_text().replace('versionCode = 1; versionName = "1.0"', 'versionCode = 2; versionName = "1.1"')
-          gradle.write_text(g)
+          p = Path('MinimalLauncher/app/build.gradle.kts')
+          p.write_text(p.read_text().replace('versionCode = 1; versionName = "1.0"', 'versionCode = 3; versionName = "1.2"'))
           PY
-          test -f MinimalLauncher/settings.gradle.kts
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -66,6 +36,6 @@ jobs:
         run: gradle --no-daemon assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: MinimalLauncher-v1.1-debug-apk
+          name: MinimalLauncher-v1.2-debug-apk
           path: MinimalLauncher/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
