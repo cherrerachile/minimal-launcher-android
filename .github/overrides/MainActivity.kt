@@ -2,9 +2,11 @@ package cl.minimal.launcher
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.location.LocationManager
 import android.os.Bundle
@@ -12,8 +14,9 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
-import android.view.View
 import android.widget.*
+import android.text.TextWatcher
+import android.text.Editable
 import org.json.JSONObject
 import java.net.URL
 import java.time.LocalDateTime
@@ -24,42 +27,58 @@ import kotlin.concurrent.thread
 class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val locale = Locale("es", "CL")
-    private val bg = Color.rgb(13, 17, 24)
-    private val surface = Color.rgb(31, 38, 50)
-    private val muted = Color.rgb(167, 180, 195)
-    private val accent = Color.rgb(119, 188, 249)
+    private val bg = Color.rgb(12, 16, 23)
+    private val panel = Color.rgb(27, 34, 45)
+    private val muted = Color.rgb(151, 166, 185)
+    private val accent = Color.rgb(153, 199, 255)
     private lateinit var greeting: TextView
     private lateinit var clock: TextView
     private lateinit var date: TextView
     private lateinit var weather: TextView
     private var startY = 0f
-    private fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
-    private fun shape(color: Int, radius: Int = 20) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
+    private val prefs by lazy { getSharedPreferences("launcher_settings", MODE_PRIVATE) }
+    private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
+    private fun rounded(color: Int, radius: Int = 22) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
+    private fun txt(value: String, size: Float, color: Int = Color.WHITE, bold: Boolean = false) = TextView(this).apply {
+        text = value; textSize = size; setTextColor(color)
+        if (bold) setTypeface(null, Typeface.BOLD)
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = bg
-        window.navigationBarColor = bg
+        window.statusBarColor = bg; window.navigationBarColor = bg
         home()
         if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) refreshWeather()
         else requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION), 100)
         handler.post(object : Runnable {
-            override fun run() { updateTime(); handler.postDelayed(this, 30000) }
+            override fun run() { updateTime(); handler.postDelayed(this, 30_000) }
         })
     }
-    private fun label(value: String, size: Float, color: Int = Color.WHITE): TextView = TextView(this).apply {
-        text = value; textSize = size; setTextColor(color); includeFontPadding = true
+    private fun apps(): List<Pair<String, String>> {
+        val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        @Suppress("DEPRECATION") val results = packageManager.queryIntentActivities(query, 0)
+        return results.map { it.loadLabel(packageManager).toString() to it.activityInfo.packageName }
+            .distinctBy { it.second }.filter { it.second != packageName }.sortedBy { it.first.lowercase(locale) }
+    }
+    private fun selected(index: Int, list: List<Pair<String, String>>): Pair<String, String>? {
+        val pkg = prefs.getString("shortcut_$index", null)
+        return if (pkg == null) list.getOrNull(index) else list.firstOrNull { it.second == pkg }
     }
     private fun home() {
         val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(42), dp(24), dp(28)); setBackgroundColor(bg)
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bg)
+            setPadding(dp(24), dp(42), dp(24), dp(24))
         }
         setContentView(root)
-        greeting = label("", 25f); root.addView(greeting)
-        clock = label("", 64f).apply { setPadding(0, dp(8), 0, 0) }; root.addView(clock)
-        date = label("", 15f, muted); root.addView(date)
-        weather = label("Clima: esperando ubicación", 15f, accent).apply {
+        greeting = txt("", 23f, Color.WHITE, true)
+        root.addView(greeting)
+        clock = txt("", 67f, Color.WHITE, true).apply { setPadding(0, dp(8), 0, 0) }
+        root.addView(clock)
+        date = txt("", 15f, muted)
+        root.addView(date)
+        weather = txt("Clima: consultando ubicación", 15f, accent).apply {
+            background = rounded(panel, 18)
             setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = shape(surface)
             setOnClickListener {
                 if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) refreshWeather()
                 else requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION), 100)
@@ -67,43 +86,78 @@ class MainActivity : Activity() {
         }
         root.addView(weather, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
         root.addView(Space(this), LinearLayout.LayoutParams(1, 0, 1f))
-        apps().take(6).chunked(3).forEach { entries ->
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            entries.forEach { info ->
-                val item = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = shape(surface)
-                    setOnClickListener { launch(info.second) }
+        root.addView(txt("TUS ACCESOS", 11f, muted, true).apply {
+            letterSpacing = 0.16f
+            setPadding(dp(2), 0, 0, dp(12))
+        })
+        val available = apps()
+        for (rowIndex in 0..1) {
+            val row = LinearLayout(this)
+            for (column in 0..1) {
+                val index = rowIndex * 2 + column
+                val item = selected(index, available)
+                val tile = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    background = rounded(panel)
+                    setPadding(dp(8), dp(14), dp(8), dp(12))
                 }
-                val symbol = info.first.take(1).uppercase(locale)
-                item.addView(label(symbol, 26f, accent).apply { gravity = Gravity.CENTER })
-                item.addView(label(info.first, 11f).apply {
-                    gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                    setPadding(dp(4), dp(6), dp(4), 0)
-                })
-                row.addView(item, LinearLayout.LayoutParams(0, dp(96), 1f).apply {
-                    marginStart = dp(4); marginEnd = dp(4); bottomMargin = dp(8)
+                val symbol = txt(item?.first?.take(1)?.uppercase(locale) ?: "+", 30f, accent, true).apply { gravity = Gravity.CENTER }
+                val name = txt(item?.first ?: "Elegir aplicación", 13f, Color.WHITE, true).apply {
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(0, dp(7), 0, 0)
+                }
+                tile.addView(symbol)
+                tile.addView(name)
+                tile.setOnClickListener { if (item == null) choose(index) else launch(item.second) }
+                tile.setOnLongClickListener { choose(index); true }
+                row.addView(tile, LinearLayout.LayoutParams(0, dp(120), 1f).apply {
+                    marginStart = if (column == 0) 0 else dp(7)
+                    marginEnd = if (column == 0) dp(7) else 0
                 })
             }
-            root.addView(row)
+            root.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) })
         }
-        val search = label("⌕  Buscar aplicaciones     ↑", 16f).apply {
-            gravity = Gravity.CENTER; background = shape(surface, 18)
+        val help = txt("Mantén pulsado un acceso para cambiarlo", 12f, muted).apply { gravity = Gravity.CENTER }
+        root.addView(help, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
+        val browse = txt("⌕     Buscar aplicaciones                         ↑", 15f).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(panel, 18)
+            setPadding(dp(18), 0, dp(12), 0)
             setOnClickListener { drawer() }
         }
-        root.addView(search, LinearLayout.LayoutParams(-1, dp(54)).apply { topMargin = dp(14) })
-        root.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> { startY = event.y; true }
-                MotionEvent.ACTION_UP -> { if (startY - event.y > dp(80)) drawer(); true }
+        root.addView(browse, LinearLayout.LayoutParams(-1, dp(56)))
+        root.setOnTouchListener { _, e ->
+            when(e.action) {
+                MotionEvent.ACTION_DOWN -> { startY = e.y; true }
+                MotionEvent.ACTION_UP -> { if (startY - e.y > dp(85)) drawer(); true }
                 else -> true
             }
         }
         updateTime()
     }
+    private fun choose(index: Int) {
+        val list = apps()
+        val names = list.map { it.first }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Aplicación para acceso ${index + 1}")
+            .setItems(names) { _, position ->
+                prefs.edit().putString("shortcut_$index", list[position].second).apply()
+                home()
+            }
+            .setNeutralButton("Restablecer") { _, _ ->
+                prefs.edit().remove("shortcut_$index").apply()
+                home()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
     private fun updateTime() {
         if (!::clock.isInitialized) return
         val now = LocalDateTime.now()
-        greeting.text = when (now.hour) {
+        greeting.text = when(now.hour) {
             in 5..11 -> "Buen día, Cristian"
             in 12..19 -> "Buenas tardes, Cristian"
             else -> "Buenas noches, Cristian"
@@ -111,47 +165,51 @@ class MainActivity : Activity() {
         clock.text = now.format(DateTimeFormatter.ofPattern("HH:mm"))
         date.text = now.format(DateTimeFormatter.ofPattern("EEEE d 'de' MMMM", locale)).replaceFirstChar { it.uppercase(locale) }
     }
-    private fun apps(): List<Pair<String, String>> {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        @Suppress("DEPRECATION") val results = packageManager.queryIntentActivities(intent, 0)
-        return results.map { it.loadLabel(packageManager).toString() to it.activityInfo.packageName }
-            .distinctBy { it.second }.filter { it.second != packageName }.sortedBy { it.first.lowercase(locale) }
-    }
     private fun launch(pkg: String) {
-        val intent = packageManager.getLaunchIntentForPackage(pkg)
-        if (intent != null) startActivity(intent) else Toast.makeText(this, "No se pudo abrir la aplicación", Toast.LENGTH_SHORT).show()
+        packageManager.getLaunchIntentForPackage(pkg)?.let { startActivity(it) }
+            ?: Toast.makeText(this, "No se pudo abrir la aplicación", Toast.LENGTH_SHORT).show()
     }
     private fun drawer() {
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(30), dp(24), dp(20)); setBackgroundColor(bg)
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(32), dp(24), dp(20))
+            setBackgroundColor(bg)
         }
+        setContentView(page)
+        val heading = txt("Aplicaciones", 27f, Color.WHITE, true)
+        page.addView(heading)
         val input = EditText(this).apply {
-            hint = "Buscar aplicación"; setSingleLine(true); setTextColor(Color.WHITE); setHintTextColor(muted)
+            hint = "Buscar por nombre"
+            setSingleLine(true)
+            setTextColor(Color.WHITE)
+            setHintTextColor(muted)
         }
-        panel.addView(input)
+        page.addView(input)
         val scroll = ScrollView(this)
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        scroll.addView(list); panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        scroll.addView(list)
+        page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         val all = apps()
-        fun render(q: String) {
+        fun render(query: String) {
             list.removeAllViews()
-            all.filter { it.first.contains(q, true) }.forEach { app ->
-                list.addView(label(app.first, 17f).apply {
+            all.filter { it.first.contains(query, ignoreCase = true) }.forEach { app ->
+                val item = txt(app.first, 17f).apply {
                     setPadding(dp(12), dp(18), dp(12), dp(18))
                     setOnClickListener { launch(app.second) }
-                })
+                }
+                list.addView(item)
             }
         }
-        input.addTextChangedListener(object : android.text.TextWatcher {
+        input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { render(s.toString()) }
-            override fun afterTextChanged(s: android.text.Editable?) {}
+            override fun afterTextChanged(s: Editable?) {}
         })
         render("")
-        panel.addView(label("←  Volver al inicio", 16f, accent).apply {
-            setPadding(0, dp(18), 0, dp(12)); setOnClickListener { home() }
+        page.addView(txt("←  Volver al inicio", 16f, accent).apply {
+            setPadding(0, dp(16), 0, dp(14))
+            setOnClickListener { home() }
         })
-        setContentView(panel)
     }
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() { home() }
@@ -159,25 +217,37 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 100) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) refreshWeather()
-            else if (::weather.isInitialized) weather.text = "Activa ubicación para ver el clima"
+            else if (::weather.isInitialized) weather.text = "Activa la ubicación para ver el clima"
         }
     }
     private fun refreshWeather() {
         try {
             val manager = getSystemService(LOCATION_SERVICE) as LocationManager
-            @Suppress("MissingPermission") val location = manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-                ?: manager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            if (location == null) { weather.text = "Clima: esperando ubicación · toca para actualizar"; return }
+            @Suppress("MissingPermission") val location =
+                manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                    ?: manager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            if (location == null) { weather.text = "Clima: esperando ubicación"; return }
             thread {
                 try {
                     val url = "https://api.open-meteo.com/v1/forecast?latitude=${location.latitude}&longitude=${location.longitude}&current=temperature_2m,weather_code&timezone=auto"
-                    val connection = URL(url).openConnection().apply { connectTimeout = 8000; readTimeout = 8000 }
-                    val json = JSONObject(connection.getInputStream().bufferedReader().use { it.readText() }).getJSONObject("current")
-                    val degrees = json.getDouble("temperature_2m").toInt()
-                    val code = json.getInt("weather_code")
-                    val condition = when(code) { 0 -> "Despejado"; 1,2,3 -> "Nubosidad"; 45,48 -> "Niebla"; in 51..67 -> "Lluvia"; in 71..77 -> "Nieve"; in 80..82 -> "Chubascos"; in 95..99 -> "Tormenta"; else -> "Variable" }
+                    val conn = URL(url).openConnection().apply { connectTimeout = 8000; readTimeout = 8000 }
+                    val current = JSONObject(conn.getInputStream().bufferedReader().use { it.readText() }).getJSONObject("current")
+                    val degrees = current.getDouble("temperature_2m").toInt()
+                    val code = current.getInt("weather_code")
+                    val condition = when(code) {
+                        0 -> "Despejado"
+                        1,2,3 -> "Nubosidad"
+                        45,48 -> "Niebla"
+                        in 51..67 -> "Lluvia"
+                        in 71..77 -> "Nieve"
+                        in 80..82 -> "Chubascos"
+                        in 95..99 -> "Tormenta"
+                        else -> "Variable"
+                    }
                     runOnUiThread { if (::weather.isInitialized) weather.text = "$degrees°C · $condition" }
-                } catch (_: Exception) { runOnUiThread { if (::weather.isInitialized) weather.text = "Clima no disponible · toca para actualizar" } }
+                } catch (_: Exception) {
+                    runOnUiThread { if (::weather.isInitialized) weather.text = "Clima no disponible" }
+                }
             }
         } catch (_: SecurityException) { weather.text = "Permite ubicación para mostrar el clima" }
     }

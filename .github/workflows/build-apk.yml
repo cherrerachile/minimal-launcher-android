@@ -10,14 +10,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Extract Android project and apply v1.2 changes
+      - name: Extract original source and apply modern UI
         run: |
           unzip -q MinimalLauncher_v1_source.zip
           cp .github/overrides/MainActivity.kt MinimalLauncher/app/src/main/java/cl/minimal/launcher/MainActivity.kt
           python3 - <<'PY'
           from pathlib import Path
           p = Path('MinimalLauncher/app/build.gradle.kts')
-          p.write_text(p.read_text().replace('versionCode = 1; versionName = "1.0"', 'versionCode = 3; versionName = "1.2"'))
+          p.write_text(p.read_text().replace('versionCode = 1; versionName = "1.0"', 'versionCode = 4; versionName = "1.3"'))
           PY
       - uses: actions/setup-java@v4
         with:
@@ -36,6 +36,6 @@ jobs:
         run: gradle --no-daemon assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: MinimalLauncher-v1.2-debug-apk
+          name: MinimalLauncher-v1.3-debug-apk
           path: MinimalLauncher/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
