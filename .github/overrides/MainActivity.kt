@@ -47,7 +47,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = bg; window.navigationBarColor = bg
         home()
-        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) refreshWeather()
+        if (prefs.contains("weather_lat") || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) refreshWeather()
         else requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION), 100)
         handler.post(object : Runnable {
             override fun run() { updateTime(); handler.postDelayed(this, 30_000) }
@@ -100,9 +100,9 @@ class MainActivity : Activity() {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
                     background = rounded(panel)
-                    setPadding(dp(8), dp(14), dp(8), dp(12))
+                    setPadding(dp(8), dp(8), dp(8), dp(8))
                 }
-                val symbol = txt(item?.first?.take(1)?.uppercase(locale) ?: "+", 30f, accent, true).apply { gravity = Gravity.CENTER }
+                val symbol = txt(item?.first?.take(1)?.uppercase(locale) ?: "+", 23f, accent, true).apply { gravity = Gravity.CENTER }
                 val name = txt(item?.first ?: "Elegir aplicación", 13f, Color.WHITE, true).apply {
                     gravity = Gravity.CENTER
                     maxLines = 1
@@ -113,7 +113,7 @@ class MainActivity : Activity() {
                 tile.addView(name)
                 tile.setOnClickListener { if (item == null) choose(index) else launch(item.second) }
                 tile.setOnLongClickListener { choose(index); true }
-                row.addView(tile, LinearLayout.LayoutParams(0, dp(120), 1f).apply {
+                row.addView(tile, LinearLayout.LayoutParams(0, dp(90), 1f).apply {
                     marginStart = if (column == 0) 0 else dp(7)
                     marginEnd = if (column == 0) dp(7) else 0
                 })
@@ -221,34 +221,52 @@ class MainActivity : Activity() {
         }
     }
     private fun refreshWeather() {
-        try {
-            val manager = getSystemService(LOCATION_SERVICE) as LocationManager
-            @Suppress("MissingPermission") val location =
-                manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-                    ?: manager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            if (location == null) { weather.text = "Clima: esperando ubicación"; return }
-            thread {
-                try {
-                    val url = "https://api.open-meteo.com/v1/forecast?latitude=${location.latitude}&longitude=${location.longitude}&current=temperature_2m,weather_code&timezone=auto"
-                    val conn = URL(url).openConnection().apply { connectTimeout = 8000; readTimeout = 8000 }
-                    val current = JSONObject(conn.getInputStream().bufferedReader().use { it.readText() }).getJSONObject("current")
-                    val degrees = current.getDouble("temperature_2m").toInt()
-                    val code = current.getInt("weather_code")
-                    val condition = when(code) {
-                        0 -> "Despejado"
-                        1,2,3 -> "Nubosidad"
-                        45,48 -> "Niebla"
-                        in 51..67 -> "Lluvia"
-                        in 71..77 -> "Nieve"
-                        in 80..82 -> "Chubascos"
-                        in 95..99 -> "Tormenta"
-                        else -> "Variable"
-                    }
-                    runOnUiThread { if (::weather.isInitialized) weather.text = "$degrees°C · $condition" }
-                } catch (_: Exception) {
-                    runOnUiThread { if (::weather.isInitialized) weather.text = "Clima no disponible" }
+        var latitude: Double? = if (prefs.contains("weather_lat")) java.lang.Double.longBitsToDouble(prefs.getLong("weather_lat", 0L)) else null
+        var longitude: Double? = if (prefs.contains("weather_lon")) java.lang.Double.longBitsToDouble(prefs.getLong("weather_lon", 0L)) else null
+        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            try {
+                val manager = getSystemService(LOCATION_SERVICE) as LocationManager
+                @Suppress("MissingPermission") val location =
+                    manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                        ?: manager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                if (location != null) {
+                    latitude = location.latitude
+                    longitude = location.longitude
+                    prefs.edit()
+                        .putLong("weather_lat", java.lang.Double.doubleToRawLongBits(location.latitude))
+                        .putLong("weather_lon", java.lang.Double.doubleToRawLongBits(location.longitude))
+                        .apply()
                 }
+            } catch (_: SecurityException) { }
+        }
+        if (latitude == null || longitude == null) {
+            weather.text = "⌖  Ubicación no disponible"
+            return
+        }
+        val lat = latitude
+        val lon = longitude
+        thread {
+            try {
+                val url = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,weather_code&timezone=auto"
+                val conn = URL(url).openConnection().apply { connectTimeout = 8000; readTimeout = 8000 }
+                val current = JSONObject(conn.getInputStream().bufferedReader().use { it.readText() }).getJSONObject("current")
+                val degrees = current.getDouble("temperature_2m").toInt()
+                val code = current.getInt("weather_code")
+                val (symbol, condition) = when(code) {
+                    0 -> "☀️" to "Despejado"
+                    1,2 -> "🌤️" to "Parcialmente nublado"
+                    3 -> "☁️" to "Nublado"
+                    45,48 -> "🌫️" to "Niebla"
+                    in 51..67 -> "🌧️" to "Lluvia"
+                    in 71..77 -> "❄️" to "Nieve"
+                    in 80..82 -> "🌦️" to "Chubascos"
+                    in 95..99 -> "⛈️" to "Tormenta"
+                    else -> "🌡️" to "Variable"
+                }
+                runOnUiThread { if (::weather.isInitialized) weather.text = "$symbol  $degrees°C · $condition" }
+            } catch (_: Exception) {
+                runOnUiThread { if (::weather.isInitialized) weather.text = "🌡️  Clima no disponible" }
             }
-        } catch (_: SecurityException) { weather.text = "Permite ubicación para mostrar el clima" }
+        }
     }
 }
