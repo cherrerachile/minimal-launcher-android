@@ -1,0 +1,32 @@
+name: Build Minimal Launcher APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract Android project
+        run: |
+          unzip -q MinimalLauncher_v1_source.zip
+          test -f MinimalLauncher/settings.gradle.kts
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Compile debug APK
+        working-directory: MinimalLauncher
+        run: gradle --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MinimalLauncher-debug-apk
+          path: MinimalLauncher/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
